@@ -1,0 +1,6 @@
+plastic_id,plastic_type,density,melting_point,degradation_temp,additives_present
+HDPE,High-Density Polyethylene,0.95,130,470,none
+LDPE,Low-Density Polyethylene,0.92,110,450,dyes
+PP,Polypropylene,0.9,160,480,fillers
+PS,Polystyrene,1.05,100,460,none
+Mixed (PP/PE),Mixed Polypropylene and Polyethylene,0.93,135,475,mixed

@@ -1,0 +1,6 @@
+condition_id,blend_id,temperature,heating_rate,residence_time,catalyst,reactor_type,energy_input
+C1,B1,450,10,30,Zeolite,batch,25
+C2,B2,440,15,45,None,batch,30
+C3,B3,460,12,35,Alumina,batch,28
+C4,B4,430,8,40,None,batch,22
+C5,B5,455,10,38,Zeolite,batch,27
