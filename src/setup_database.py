@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Database configuration from environment variables
 DB_CONFIG = {
     "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "jhorshuar"),
+    "password": os.getenv("DB_PASSWORD", "postgres"),
     "host": os.getenv("DB_HOST", "localhost"),
     "port": os.getenv("DB_PORT", "5432"),
     "database": os.getenv("DB_NAME", "pyrolysis_db")
@@ -45,10 +45,10 @@ def load_csv_files() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataF
     """Load and validate CSV files."""
     try:
         # Load CSV files
-        feed = pd.read_csv("../data/plastic_feedstock_large.csv")
-        blend = pd.read_csv("../data/blend_compositions_large.csv")
-        condition = pd.read_csv("../data/pyrolysis_conditions_large.csv")
-        output = pd.read_csv("../data/pyrolysis_outputs_large.csv")
+        feed = pd.read_csv("../data/plastic_feedstock.csv")
+        blend = pd.read_csv("../data/blend_compositions.csv")
+        condition = pd.read_csv("../data/pyrolysis_conditions.csv")
+        output = pd.read_csv("../data/pyrolysis_outputs.csv")
         
         # Basic validation
         for df, name in zip([feed, blend, condition, output], 
