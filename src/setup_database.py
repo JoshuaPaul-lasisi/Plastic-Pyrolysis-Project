@@ -1,6 +1,6 @@
 import pandas as pd
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import create_engine, text, exc
+from sqlalchemy.exc import SQLAlchemyError  # Added this import
 import logging
 import os
 from typing import Tuple
@@ -12,31 +12,69 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database configuration from environment variables
+# Database configuration
 DB_CONFIG = {
     "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "jhorshuar"),
     "host": os.getenv("DB_HOST", "localhost"),
     "port": os.getenv("DB_PORT", "5432"),
-    "database": os.getenv("DB_NAME", "pyrolysis_db")
+    "database": os.getenv("DB_NAME", "pyrolysis_db"),
+    "admin_db": "postgres"
 }
 
+def create_database_if_not_exists(config: dict) -> None:
+    """Create the database if it doesn't exist."""
+    admin_conn_string = (
+        f"postgresql+psycopg2://{config['user']}:{config['password']}@"
+        f"{config['host']}:{config['port']}/{config['admin_db']}"
+    )
+    
+    try:
+        admin_engine = create_engine(admin_conn_string, isolation_level="AUTOCOMMIT")
+        with admin_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+                {"dbname": config["database"]}
+            )
+            
+            if not result.scalar():
+                logger.info(f"Creating database {config['database']}")
+                conn.execute(text(f"CREATE DATABASE {config['database']}"))
+                logger.info(f"Database {config['database']} created successfully")
+            else:
+                logger.info(f"Database {config['database']} already exists")
+                
+    except exc.OperationalError as e:
+        logger.error(f"Failed to connect to PostgreSQL: {str(e)}")
+        if "password authentication failed" in str(e):
+            logger.error("Please verify your PostgreSQL username and password")
+        raise
+    finally:
+        if 'admin_engine' in locals():
+            admin_engine.dispose()
+
 def create_db_engine(config: dict) -> create_engine:
-    """Create and return a database engine with connection pooling."""
+    """Create and return a database engine."""
     try:
         connection_string = (
             f"postgresql+psycopg2://{config['user']}:{config['password']}@"
             f"{config['host']}:{config['port']}/{config['database']}"
         )
-        engine = create_engine(
-            connection_string,
-            pool_size=5,
-            max_overflow=10,
-            pool_timeout=30,
-            pool_recycle=3600
-        )
-        logger.info("Database engine created successfully")
+        engine = create_engine(connection_string)
+        
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            
+        logger.info("Database engine created and connection verified")
         return engine
+        
+    except exc.OperationalError as e:
+        logger.error(f"Failed to connect to database: {str(e)}")
+        if "does not exist" in str(e):
+            logger.error(f"Database {config['database']} doesn't exist - trying to create it")
+            create_database_if_not_exists(config)
+            return create_db_engine(config)
+        raise
     except Exception as e:
         logger.error(f"Error creating database engine: {str(e)}")
         raise
@@ -44,13 +82,14 @@ def create_db_engine(config: dict) -> create_engine:
 def load_csv_files() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load and validate CSV files."""
     try:
-        # Load CSV files
         feed = pd.read_csv("../data/plastic_feedstock.csv")
         blend = pd.read_csv("../data/blend_compositions.csv")
         condition = pd.read_csv("../data/pyrolysis_conditions.csv")
         output = pd.read_csv("../data/pyrolysis_outputs.csv")
         
-        # Basic validation
+        # Data validation - ensure char_yield is non-negative
+        output['char_yield'] = output['char_yield'].clip(lower=0)  # Fix negative values
+        
         for df, name in zip([feed, blend, condition, output], 
                           ["feedstock", "blend", "conditions", "outputs"]):
             if df.empty:
@@ -131,7 +170,6 @@ def load_data_to_db(
     """Load data into database tables with error handling."""
     try:
         with engine.begin() as conn:
-            # Load data with explicit chunksize for large files
             feed.to_sql(
                 "plastic_feedstock", 
                 con=conn, 
@@ -170,16 +208,9 @@ def main() -> bool:
     try:
         logger.info("Starting database setup process")
         
-        # Initialize database connection
         engine = create_db_engine(DB_CONFIG)
-        
-        # Load CSV data
         feed, blend, condition, output = load_csv_files()
-        
-        # Setup database schema
         setup_database_schema(engine)
-        
-        # Load data into database
         load_data_to_db(engine, feed, blend, condition, output)
         
         logger.info("Database setup completed successfully")
@@ -191,10 +222,22 @@ def main() -> bool:
     finally:
         if 'engine' in locals():
             engine.dispose()
-            logger.info("Database engine disposed")
 
 if __name__ == "__main__":
+    print("Database Setup Script")
+    print("---------------------")
+    
+    try:
+        create_database_if_not_exists(DB_CONFIG)
+    except Exception as e:
+        print(f"\nFATAL: Could not initialize database: {str(e)}")
+        print("Please ensure:")
+        print("1. PostgreSQL is running")
+        print("2. Your credentials in DB_CONFIG are correct")
+        print("3. You have privileges to create databases")
+        exit(1)
+    
     if success := main():
-        print("Database tables created and data loaded successfully.")
+        print("\nSUCCESS: Database setup completed")
     else:
-        print("Database setup failed. Check logs for details.")
+        print("\nERROR: Database setup failed - check logs for details")
