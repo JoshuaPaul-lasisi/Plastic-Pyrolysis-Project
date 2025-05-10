@@ -2,6 +2,8 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 import logging
+import os
+from typing import Tuple
 
 # Configure logging
 logging.basicConfig(
@@ -10,38 +12,53 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database configuration (use environment variables or config file in production)
+# Database configuration from environment variables
 DB_CONFIG = {
-    "user": "postgres",  # Corrected from "postgre"
-    "password": "jhorshuar",
-    "host": "localhost",
-    "port": "5432",
-    "database": "pyrolysis_db"
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "jhorshuar"),
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": os.getenv("DB_PORT", "5432"),
+    "database": os.getenv("DB_NAME", "pyrolysis_db")
 }
 
-def create_db_engine(config):
-    """Create and return a database engine with error handling."""
+def create_db_engine(config: dict) -> create_engine:
+    """Create and return a database engine with connection pooling."""
     try:
         connection_string = (
             f"postgresql+psycopg2://{config['user']}:{config['password']}@"
             f"{config['host']}:{config['port']}/{config['database']}"
         )
-        engine = create_engine(connection_string)
+        engine = create_engine(
+            connection_string,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=30,
+            pool_recycle=3600
+        )
         logger.info("Database engine created successfully")
         return engine
     except Exception as e:
         logger.error(f"Error creating database engine: {str(e)}")
         raise
 
-def load_csv_files():
-    """Load CSV files with error handling."""
+def load_csv_files() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load and validate CSV files."""
     try:
-        feed = pd.read_csv("data/plastic_feedstock_large.csv")
-        blend = pd.read_csv("data/blend_compositions_large.csv")
-        condition = pd.read_csv("data/pyrolysis_conditions_large.csv")
-        output = pd.read_csv("data/pyrolysis_outputs_large.csv")
-        logger.info("CSV files loaded successfully")
+        # Load CSV files
+        feed = pd.read_csv("../data/plastic_feedstock_large.csv")
+        blend = pd.read_csv("../data/blend_compositions_large.csv")
+        condition = pd.read_csv("../data/pyrolysis_conditions_large.csv")
+        output = pd.read_csv("../data/pyrolysis_outputs_large.csv")
+        
+        # Basic validation
+        for df, name in zip([feed, blend, condition, output], 
+                          ["feedstock", "blend", "conditions", "outputs"]):
+            if df.empty:
+                raise ValueError(f"{name} DataFrame is empty")
+        
+        logger.info("CSV files loaded and validated successfully")
         return feed, blend, condition, output
+        
     except FileNotFoundError as e:
         logger.error(f"CSV file not found: {str(e)}")
         raise
@@ -49,7 +66,7 @@ def load_csv_files():
         logger.error(f"Error loading CSV files: {str(e)}")
         raise
 
-def setup_database_schema(engine):
+def setup_database_schema(engine: create_engine) -> None:
     """Create database schema with proper error handling."""
     schema_sql = """
     DROP TABLE IF EXISTS pyrolysis_outputs, pyrolysis_conditions, 
@@ -68,7 +85,8 @@ def setup_database_schema(engine):
         id SERIAL PRIMARY KEY,
         blend_id TEXT NOT NULL,
         plastic_id TEXT NOT NULL REFERENCES plastic_feedstock(plastic_id),
-        percentage FLOAT CHECK (percentage > 0 AND percentage <= 100)
+        percentage FLOAT CHECK (percentage > 0 AND percentage <= 100),
+        CONSTRAINT unique_blend_composition UNIQUE (blend_id, plastic_id)
     );
 
     CREATE TABLE pyrolysis_conditions (
@@ -103,41 +121,55 @@ def setup_database_schema(engine):
         logger.error(f"Error creating database schema: {str(e)}")
         raise
 
-def load_data_to_db(engine, feed, blend, condition, output):
+def load_data_to_db(
+    engine: create_engine,
+    feed: pd.DataFrame,
+    blend: pd.DataFrame,
+    condition: pd.DataFrame,
+    output: pd.DataFrame
+) -> None:
     """Load data into database tables with error handling."""
     try:
-        with engine.begin() as conn:  # Automatically commits or rolls back
+        with engine.begin() as conn:
+            # Load data with explicit chunksize for large files
             feed.to_sql(
                 "plastic_feedstock", 
                 con=conn, 
                 if_exists="append", 
-                index=False
+                index=False,
+                chunksize=1000
             )
             blend.to_sql(
                 "blend_compositions", 
                 con=conn, 
                 if_exists="append", 
-                index=False
+                index=False,
+                chunksize=1000
             )
             condition.to_sql(
                 "pyrolysis_conditions", 
                 con=conn, 
                 if_exists="append", 
-                index=False
+                index=False,
+                chunksize=1000
             )
             output.to_sql(
                 "pyrolysis_outputs", 
                 con=conn, 
                 if_exists="append", 
-                index=False
+                index=False,
+                chunksize=1000
             )
         logger.info("Data loaded to database successfully")
     except SQLAlchemyError as e:
         logger.error(f"Error loading data to database: {str(e)}")
         raise
 
-def main():
+def main() -> bool:
+    """Main execution function."""
     try:
+        logger.info("Starting database setup process")
+        
         # Initialize database connection
         engine = create_db_engine(DB_CONFIG)
         
@@ -152,13 +184,17 @@ def main():
         
         logger.info("Database setup completed successfully")
         return True
+        
     except Exception as e:
-        logger.error(f"Application failed: {str(e)}")
+        logger.error(f"Application failed: {str(e)}", exc_info=True)
         return False
+    finally:
+        if 'engine' in locals():
+            engine.dispose()
+            logger.info("Database engine disposed")
 
 if __name__ == "__main__":
-    success = main()
-    if success:
+    if success := main():
         print("Database tables created and data loaded successfully.")
     else:
         print("Database setup failed. Check logs for details.")
